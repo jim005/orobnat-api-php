@@ -14,6 +14,12 @@ class orobnat
 
     protected $post = array();
 
+    private $reseauUrl;
+    private $departementUrl;
+    private $communeDepartementUrl;
+    private $idRegionUrl;
+
+
     /**
      * orobnat constructor.
      * @param string $idRegion
@@ -23,12 +29,23 @@ class orobnat
      */
     public function __construct(string $idRegion, string $departement, string $communeDepartement, string $reseau)
     {
+        // Avoir le format pour le reseau : 072003592_072
+        $prefix = substr($reseau, 0, 3);
+        $reseau = $reseau . "_" . $prefix;
+
+        //Mise en variable globale pour la classe
+        $this->idRegionUrl=$idRegion;
+        $this->departementUrl=$departement;
+        $this->communeDepartementUrl=$communeDepartement;
+        $this->reseauUrl=$reseau;
+
         $this->post = array(
             'idRegion' => filter_var($idRegion, FILTER_SANITIZE_STRING),
             'departement' => filter_var($departement, FILTER_SANITIZE_STRING),
             'communeDepartement' => filter_var($communeDepartement, FILTER_SANITIZE_STRING),
             'reseau' => filter_var($reseau, FILTER_SANITIZE_STRING),
         );
+	
     }
 
     /**
@@ -42,7 +59,8 @@ class orobnat
         $cookies = null;
 
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, 'https://orobnat.sante.gouv.fr/orobnat/afficherPage.do?methode=menu&usd=AEP&idRegion=93');
+        $Url="https://orobnat.sante.gouv.fr/orobnat/afficherPage.do?methode=menu&usd=AEP&idRegion=".$this->idRegionUrl."&dpt=".$this->departementUrl."&comDpt=".$this->communeDepartementUrl;
+        curl_setopt($ch, CURLOPT_URL, $Url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
         curl_setopt($ch, CURLOPT_VERBOSE, 1);
         curl_setopt($ch, CURLOPT_HEADER, 1);
@@ -131,41 +149,73 @@ class orobnat
         $dom->loadHTML($result);
         $dom->preserveWhiteSpace = false;
 
-        $tables = $dom->getElementsByTagName('table');
 
-        foreach ($tables as $table) {
+        // Recherche de la liste des reseaux à partir de reseauUrl (select)
 
-            $SectionName = $table->parentNode->getElementsByTagName('h3')->item(0)->nodeValue;
-            $SectionKey = $this->transliteration_clean_filename($SectionName);
-            $data[$SectionKey]['section_nom'] = $SectionName;
-            $rows = $table->getElementsByTagName('tr');
+        $listeSelect = $dom->getElementsByTagName('select');
+        $reseauTrouve = false; // Déclaration de la variable avant la boucle
 
-            foreach ($rows as $row) {
+        foreach ($listeSelect as $select) {
+            $selectName = $select->getAttribute('name');
 
-                $cols = $row->childNodes;
+            if ($selectName == "departement") continue;
+            if ($selectName == "communeDepartement") continue;
 
-                // Remove useless row :: from property
-                if (empty($cols->item(1)->nodeValue) || $cols->item(1)->nodeValue == "" || $cols->item(1)->nodeValue == "Paramètre") {
-                    continue;
+            if ($selectName == "reseau") {
+                $options = $select->getElementsByTagName('option');
+
+                foreach ($options as $option) {
+                    $reseauSite = $option->getAttribute('value');
+
+                    if ($reseauSite=='$this->reseauUrl') {
+                        $reseauTrouve = true;
+                        break;
+                    }
                 }
-                // Remove useless row :: from value
-                if ($cols->item(3)->nodeValue == "* Analyse  réalisée sur le terrain") {
-                    continue;
-                }
+            }
+        }
 
-                $keyRow = $this->transliteration_clean_filename($cols->item(1)->nodeValue);
+        if($reseauTrouve) {
 
-                $data[$SectionKey][$keyRow]['labelOriginal'] = $cols->item(1)->nodeValue;
-                $data[$SectionKey][$keyRow]['valueOriginal'] = trim(preg_replace("/[\r\t\n]+/", " ", $cols->item(3)->nodeValue));
+            // Recherche des données pour l'analyse (table)
 
-                if (!is_null($this->getValueOnly($cols->item(3)->nodeValue))) {
-                    $data[$SectionKey][$keyRow]['valueOnly'] = $this->getValueOnly($cols->item(3)->nodeValue);
-                    $data[$SectionKey][$keyRow]['valueUnity'] = trim(preg_replace("/[\r\t\n]+/", " ", $cols->item(3)->nodeValue));
+
+            $tables = $dom->getElementsByTagName('table');
+
+            foreach ($tables as $table) {
+
+                $SectionName = $table->parentNode->getElementsByTagName('h3')->item(0)->nodeValue;
+                $SectionKey = $this->transliteration_clean_filename($SectionName);
+                $data[$SectionKey]['section_nom'] = $SectionName;
+                $rows = $table->getElementsByTagName('tr');
+
+                foreach ($rows as $row) {
+
+                    $cols = $row->childNodes;
+
+                    // Remove useless row :: from property
+                    if (empty($cols->item(1)->nodeValue) || $cols->item(1)->nodeValue == "" || $cols->item(1)->nodeValue == "Paramètre") {
+                        continue;
+                    }
+                    // Remove useless row :: from value
+                    if ($cols->item(3)->nodeValue == "* Analyse  réalisée sur le terrain") {
+                        continue;
+                    }
+
+                    $keyRow = $this->transliteration_clean_filename($cols->item(1)->nodeValue);
+
+                    $data[$SectionKey][$keyRow]['labelOriginal'] = $cols->item(1)->nodeValue;
+                    $data[$SectionKey][$keyRow]['valueOriginal'] = trim(preg_replace("/[\r\t\n]+/", " ", $cols->item(3)->nodeValue));
+
+                    if (!is_null($this->getValueOnly($cols->item(3)->nodeValue))) {
+                        $data[$SectionKey][$keyRow]['valueOnly'] = $this->getValueOnly($cols->item(3)->nodeValue);
+                        $data[$SectionKey][$keyRow]['valueUnity'] = trim(preg_replace("/[\r\t\n]+/", " ", $cols->item(3)->nodeValue));
+                    }
+
                 }
 
             }
-
-        }
+        } else { $data="{}"; }
 
         return $data;
 
